@@ -1,5 +1,8 @@
 #!/bin/bash
 
+set -e
+set -x
+
 # This script is configured to train your own GPT-2 grade LLM (pretraining + finetuning)
 # It is designed to run on a blank 8XH100 GPU node and takes approximately 3 hours to complete.
 
@@ -79,11 +82,33 @@ export CUDA_HOME=/usr/local/cuda-${MY_CUDA_VER}
 export PATH=/usr/local/cuda-${MY_CUDA_VER}/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda-${MY_CUDA_VER}/lib64:${LD_LIBRARY_PATH}
 
+BATCH_SIZE=32
 # d24 model (slightly undertrained to beat GPT-2 => decrease data:params ratio from compute optimal 10.5 (default) to 8)
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=24 --target-param-data-ratio=8 --device-batch-size=16 --fp8 --run=$WANDB_RUN
+DEPTH=24
+PARAM_DATA_RATIO=8
+
+WINDOW_PATTERN=
+if [ "${NPROC_PER_NODE}" == 1 ] ; then
+    DEPTH=4
+    WINDOW_PATTERN="--window-pattern L"
+fi
+
+# for comparison / benchmarking, run this script within the NVIDIA docker container:
+####  docker pull nvcr.io/nvidia/pytorch:25.09-py3
+####  # run below from within the nanochat directory
+####  docker run --gpus all -it --rm --ipc=host \
+####  -v $HOME/.cache/nanochat:/root/.cache/nanochat \
+####  -v ${PWD}:/workspace -w /workspace \
+####  nvcr.io/nvidia/pytorch:25.09-py3
+####
+####  # install inside the container: pandas pyarrow wandb tokenizers tiktoken
+####  # run inside the nanochat directory inside the container: python -m scripts.base_train --depth=2
+
+
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=$DEPTH --target-param-data-ratio=$PARAM_DATA_RATIO --run=$WANDB_RUN --device-batch-size=${BATCH_SIZE} --fp8 --save-every=10000 --sample-every=100 ${WINDOW_PATTERN}
 
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval -- --device-batch-size=16
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval -- --device-batch-size=${BATCH_SIZE}
 
 # -----------------------------------------------------------------------------
 # SFT (teach the model conversation special tokens, tool use, multiple choice)
@@ -93,7 +118,7 @@ torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval -- -
 curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
 # run SFT and eval the model
-torchrun --standalone --nproc_per_node=NPROC_PER_NODE -m scripts.chat_sft -- --device-batch-size=16 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=NPROC_PER_NODE -m scripts.chat_sft -- --device-batch-size=${BATCH_SIZE} --run=$WANDB_RUN
 torchrun --standalone --nproc_per_node=NPROC_PER_NODE -m scripts.chat_eval -- -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
