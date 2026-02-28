@@ -18,6 +18,9 @@ dependencies = [
     "triton>=3.5.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
+    "zstandard>=0.25.0",
+# FA is not optimized for GB100 yet: https://github.com/Dao-AILab/flash-attention/issues/1969#issuecomment-3621008800
+#    "flash-attention==2.8.3",
 ]
 
 [dependency-groups]
@@ -44,6 +47,7 @@ torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu130", extra = "gpu" },
 ]
+flash-attention = [ { index = "pytorch-cu130" }, ]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
