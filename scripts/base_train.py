@@ -77,6 +77,9 @@ parser.add_argument("--sample-every", type=int, default=2000, help="sample from 
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
+# Corpus blend
+parser.add_argument("--blend-m", type=int, default=10,
+    help="oversampling multiplier for non-primary corpora (0 = disable blending)")
 args = parser.parse_args()
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
@@ -325,10 +328,23 @@ scaler = torch.amp.GradScaler() if COMPUTE_DTYPE == torch.float16 else None
 if scaler is not None:
     print0("GradScaler enabled for fp16 training")
 
+# Corpus blend: build scheduled file list (uses target_tokens computed above)
+if args.blend_m > 0:
+    from nanochat.dataset import get_corpuses, build_blend_schedule
+    corpuses = get_corpuses()
+    if len(corpuses) > 1:  # at least one non-primary corpus exists
+        scheduled_paths, blend_report = build_blend_schedule(
+            corpuses, m=args.blend_m, target_primary_tokens=target_tokens
+        )
+    else:
+        scheduled_paths, blend_report = None, {}
+else:
+    scheduled_paths, blend_report = None, {}
+
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
-train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
+train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict, scheduled_paths=scheduled_paths)
 build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
@@ -351,6 +367,24 @@ elif args.target_param_data_ratio > 0:
     print0(f"Calculated number of iterations from target data:param ratio: {num_iterations:,}")
 else:
     raise ValueError("No training horizon specified")
+
+# Extend training horizon for domain corpus oversampling
+if blend_report:
+    domain_extra_tokens = sum(
+        info["est_tokens"] * args.blend_m
+        for name, info in blend_report.items() if name != "primary"
+    )
+    if domain_extra_tokens > 0:
+        num_iterations = (target_tokens + domain_extra_tokens) // total_batch_size
+        print0(f"Corpus blend enabled (m={args.blend_m}):")
+        for name, info in blend_report.items():
+            print0(f"  {name:20s}: {info['files']} files, "
+                   f"~{info['est_tokens']/1e9:.2f}B est. tokens, "
+                   f"repeats={info['repeats']}, "
+                   f"eff. epochs≈{info.get('effective_epochs', 1):.1f}")
+        print0(f"  Extended num_iterations: {num_iterations:,} "
+               f"(+{domain_extra_tokens/1e9:.2f}B domain tokens)")
+
 total_tokens = total_batch_size * num_iterations # the actual number of tokens we will train for
 print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20

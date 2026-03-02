@@ -64,6 +64,75 @@ def list_parquet_files(data_dir=None, warn_on_legacy=False):
     parquet_paths = [os.path.join(data_dir, f) for f in parquet_files]
     return parquet_paths
 
+def get_corpuses(data_dir=None):
+    """
+    Returns dict mapping corpus_name -> sorted list of parquet file paths.
+    - Files named "shard_*.parquet" → corpus_name = "primary"
+    - Files named "foo_*.parquet"   → corpus_name = "foo"
+    The last file overall (alphabetically) is reserved for validation and excluded.
+    """
+    all_paths = list_parquet_files(data_dir)          # already sorted
+    train_paths = all_paths[:-1]                       # exclude last file (val shard)
+    corpuses = {}
+    for path in train_paths:
+        prefix = os.path.basename(path).split('_')[0]
+        name = "primary" if prefix == "shard" else prefix
+        corpuses.setdefault(name, []).append(path)
+    return corpuses
+
+def estimate_corpus_tokens(file_paths, bytes_per_token=4):
+    """Estimate total token count from file sizes. Good to ±25%."""
+    total_bytes = sum(os.path.getsize(p) for p in file_paths)
+    return total_bytes // bytes_per_token
+
+def build_blend_schedule(corpuses, m, target_primary_tokens):
+    """
+    Returns a flat list of parquet file paths where each non-primary corpus's
+    files appear k times (k = round(m × S_primary / target_primary_tokens))
+    interleaved evenly with primary files.
+
+    Args:
+        corpuses: dict from get_corpuses()
+        m: oversampling factor (e.g. 10)
+        target_primary_tokens: T_FineWeb (Chinchilla-optimal tokens for primary)
+
+    Returns:
+        scheduled: list[str] of file paths (primary once, each domain corpus k times)
+        report: dict with per-corpus stats for logging
+    """
+    primary_paths = corpuses.get("primary", [])
+    s_primary = estimate_corpus_tokens(primary_paths)
+    k = max(1, round(m * s_primary / max(target_primary_tokens, 1)))
+
+    domain_slots = []  # flat list of paths to interleave
+    report = {"primary": {"files": len(primary_paths), "est_tokens": s_primary, "repeats": 1}}
+
+    for name, paths in corpuses.items():
+        if name == "primary":
+            continue
+        s_domain = estimate_corpus_tokens(paths)
+        domain_slots.extend(paths * k)
+        report[name] = {"files": len(paths), "est_tokens": s_domain,
+                        "repeats": k, "effective_epochs": m}
+
+    if not domain_slots:
+        return primary_paths, report
+
+    # Evenly interleave domain slots across primary slots
+    result = []
+    n_p, n_d = len(primary_paths), len(domain_slots)
+    ratio = n_d / max(n_p, 1)
+    d_cursor = 0
+    for i, pf in enumerate(primary_paths):
+        target_d = round((i + 1) * ratio)
+        while d_cursor < target_d:
+            result.append(domain_slots[d_cursor])
+            d_cursor += 1
+        result.append(pf)
+    result.extend(domain_slots[d_cursor:])  # any tail domain slots
+
+    return result, report
+
 def parquets_iter_batched(split, start=0, step=1):
     """
     Iterate through the dataset, in batches of underlying row_groups for efficiency.

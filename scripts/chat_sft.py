@@ -66,6 +66,7 @@ parser.add_argument("--chatcore-max-sample", type=int, default=24, help="max pro
 # Data mixture
 parser.add_argument("--mmlu-epochs", type=int, default=3, help="number of epochs of MMLU in training mixture (teaches Multiple Choice)")
 parser.add_argument("--gsm8k-epochs", type=int, default=4, help="number of epochs of GSM8K in training mixture (teaches Math and Tool Use)")
+parser.add_argument("--domain-qa-epochs", type=int, default=3, help="epochs of domain Q&A pairs to include in SFT mixture (0 = skip)")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
@@ -171,6 +172,16 @@ train_tasks = [
     SimpleSpelling(size=200000, split="train"), # 200K rows of Simple Spelling (e.g. spell the word 'apple')
     SpellingBee(size=80000, split="train"), # 80K rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
 ]
+if args.domain_qa_epochs > 0:
+    from tasks.domainqa import get_domain_qa_tasks
+    domain_tasks = get_domain_qa_tasks(base_dir, epochs=args.domain_qa_epochs)
+    if domain_tasks:
+        train_tasks.extend(domain_tasks)
+        total_qa = sum(t.num_examples() for t in domain_tasks)
+        print0(f"Added {len(domain_tasks)} domain Q&A task(s) ({args.domain_qa_epochs} epoch(s) each) "
+               f"= {total_qa:,} Q&A pairs")
+    else:
+        print0(f"No domain Q&A files found in {base_dir}/domain_qa/ — skipping")
 train_dataset = TaskMixture(train_tasks)
 print0(f"Training mixture: {len(train_dataset):,} rows (MMLU x{args.mmlu_epochs}, GSM8K x{args.gsm8k_epochs})")
 val_dataset = TaskMixture([
