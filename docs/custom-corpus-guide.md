@@ -5,14 +5,14 @@
 Nanochat's dataloader reads parquet files with a single `text` column. Each row is one document. The naming convention determines corpus membership:
 
 ```python
-# In ~/out/nanochat/base_data/:
-#   shard_00000.parquet  →  "primary" corpus (FineWeb-EDU)
+# In ~/out/nanochat/base_data_climbmix/:
+#   shard_00000.parquet  →  "primary" corpus (ClimbMix)
 #   shard_00001.parquet  →  "primary"
 #   legal_00.parquet     →  "legal" corpus (your domain)
 #   mydata_00.parquet    →  "mydata" corpus (your domain)
 ```
 
-The prefix before the first `_` becomes the corpus name. `shard_*` is reserved for primary (FineWeb-EDU).
+The prefix before the first `_` becomes the corpus name. `shard_*` is reserved for primary (ClimbMix).
 
 Here's a minimal script to convert your text data:
 
@@ -28,21 +28,21 @@ documents = [
 ]
 
 table = pa.table({"text": documents})
-pq.write_table(table, "~/out/nanochat/base_data/mydata_00.parquet")
+pq.write_table(table, "~/out/nanochat/base_data_climbmix/mydata_00.parquet")
 ```
 
 You don't need to tokenize anything — the dataloader handles tokenization on-the-fly using nanochat's 32K-vocab BPE tokenizer. Just provide raw text.
 
 ## Step 2: Train with Blending
 
-Once your parquet is in `base_data/`, blending is automatic:
+Once your parquet is in `base_data_climbmix/`, blending is automatic:
 
 ```bash
 torchrun --nproc_per_node=8 -m scripts.base_train \
   --depth=20 --blend-m=10
 ```
 
-`--blend-m=10` means your domain corpus will be oversampled so it gets ~10 effective epochs over the training run, while FineWeb-EDU gets its Chinchilla-optimal single pass. The training horizon is automatically extended to accommodate the extra domain tokens.
+`--blend-m=10` means your domain corpus will be oversampled so it gets ~10 effective epochs over the training run, while ClimbMix gets its Chinchilla-optimal single pass. The training horizon is automatically extended to accommodate the extra domain tokens.
 
 ## Step 3 (Optional): Domain Q&A for SFT
 
@@ -63,13 +63,13 @@ torchrun --nproc_per_node=8 -m scripts.chat_sft --model-tag d20 --domain-qa-epoc
 **No — it's actively beneficial**, with one caveat.
 
 **Pros of joint training:**
-- Your model retains general language competence (grammar, reasoning, world knowledge) from FineWeb-EDU
+- Your model retains general language competence (grammar, reasoning, world knowledge) from ClimbMix
 - Domain-specific knowledge is layered on top, not replacing general capabilities
 - The blend schedule interleaves domain files across primary files, so the model sees both distributions throughout training (no catastrophic forgetting from sequential training)
 
-**The caveat — capacity allocation:** A model has finite parameters. Tokens spent memorizing your domain are tokens that *could* have further reduced general loss. This is the "tax" of multi-domain training. But nanochat's approach (oversample domain corpus m times, extend training horizon proportionally) handles this well — you're not displacing FineWeb tokens, you're adding domain tokens on top.
+**The caveat — capacity allocation:** A model has finite parameters. Tokens spent memorizing your domain are tokens that *could* have further reduced general loss. This is the "tax" of multi-domain training. But nanochat's approach (oversample domain corpus m times, extend training horizon proportionally) handles this well — you're not displacing ClimbMix tokens, you're adding domain tokens on top.
 
-The dev/LOG.md entry from Feb 17 is instructive: attempts to mix other *general* web corpora (FinePDFs, DCLM) with FineWeb-EDU all underperformed pure FineWeb-EDU. But that's general-vs-general competition. Adding a *specific* domain corpus is a different proposition — you're teaching the model genuinely new information it can't get from FineWeb.
+The dev/LOG.md entry from Feb 17 is instructive: attempts to mix other *general* web corpora (FinePDFs, DCLM) with FineWeb-EDU all underperformed pure FineWeb-EDU. But that's general-vs-general competition. Adding a *specific* domain corpus is a different proposition — you're teaching the model genuinely new information it can't get from the primary corpus.
 
 ---
 
@@ -86,7 +86,7 @@ Nanochat uses `target_tokens = target_param_data_ratio * scaling_params` where t
 | **Chinchilla-optimal tokens (T)** | ~893M (ratio=10.5) | ~26.3B | 10.5 * scaling_params |
 | **Batch size (B)** | ~524K (2^19) | ~2M (2^21) | B proportional to D^0.383 |
 | **Training steps** | ~1,703 | ~12,500 | T / B |
-| **Primary epochs (E)** | ~0.009 (100B pool) | ~0.26 | T / 100B |
+| **Primary epochs (E)** | ~0.002 (400B pool) | ~0.066 | T / 400B |
 
 Now, adding a domain corpus of size **S** tokens with `--blend-m=m`:
 
@@ -111,7 +111,7 @@ Where:
 
 1. **For a small corpus (1-50M tokens):** Use `--blend-m=10` at d20. This is the sweet spot — your domain gets ~10 epochs of exposure, training extends modestly (~10-50%), and the model retains full general capability. This is what the existing nanochat blend feature was designed for.
 
-2. **For a medium corpus (50M-500M tokens):** Consider reducing `--blend-m` to 3-5 to avoid the domain overwhelming FineWeb. At d20, 500M * 10 = 5B domain tokens would be 5.6x the primary budget — far too heavy. `--blend-m=3` gives 1.5B, a more balanced ~1:1.7 ratio.
+2. **For a medium corpus (50M-500M tokens):** Consider reducing `--blend-m` to 3-5 to avoid the domain overwhelming the primary corpus. At d20, 500M * 10 = 5B domain tokens would be 5.6x the primary budget — far too heavy. `--blend-m=3` gives 1.5B, a more balanced ~1:1.7 ratio.
 
 3. **For a large corpus (>1B tokens):** You likely want `--blend-m=1` (single pass) or even to treat it as additional primary data. At this scale, the corpus is large enough to learn from without oversampling.
 

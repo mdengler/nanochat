@@ -88,13 +88,13 @@ def estimate_corpus_tokens(file_paths, bytes_per_token=4):
 def build_blend_schedule(corpuses, m, target_primary_tokens):
     """
     Returns a flat list of parquet file paths where each non-primary corpus's
-    files appear k times (k = round(m × S_primary / target_primary_tokens))
+    files appear k times (k = round(m × target_primary_tokens / S_primary))
     interleaved evenly with primary files.
 
     Args:
         corpuses: dict from get_corpuses()
         m: oversampling factor (e.g. 10)
-        target_primary_tokens: T_FineWeb (Chinchilla-optimal tokens for primary)
+        target_primary_tokens: Chinchilla-optimal tokens for primary corpus
 
     Returns:
         scheduled: list[str] of file paths (primary once, each domain corpus k times)
@@ -102,7 +102,7 @@ def build_blend_schedule(corpuses, m, target_primary_tokens):
     """
     primary_paths = corpuses.get("primary", [])
     s_primary = estimate_corpus_tokens(primary_paths)
-    k = max(1, round(m * s_primary / max(target_primary_tokens, 1)))
+    k = max(1, round(m * target_primary_tokens / max(s_primary, 1)))
 
     domain_slots = []  # flat list of paths to interleave
     report = {"primary": {"files": len(primary_paths), "est_tokens": s_primary, "repeats": 1}}
