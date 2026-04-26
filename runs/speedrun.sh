@@ -104,8 +104,18 @@ fi
 ####  # install inside the container: pandas pyarrow wandb tokenizers tiktoken
 ####  # run inside the nanochat directory inside the container: python -m scripts.base_train --depth=2
 
+# Optional: domain corpus directories to blend into pretraining.
+# Space-separated paths in CORPUS env var; each becomes a --corpus=<path> arg
+# so base_train.py auto-prepares it via scripts.prepare_corpus before training.
+# Usage: CORPUS="/data/legal /data/medical" bash runs/speedrun.sh
+CORPUS_ARGS=""
+if [ -n "$CORPUS" ]; then
+    for dir in $CORPUS; do
+        CORPUS_ARGS="$CORPUS_ARGS --corpus=$dir"
+    done
+fi
 
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=$DEPTH --target-param-data-ratio=$PARAM_DATA_RATIO --run=$WANDB_RUN --device-batch-size=${BATCH_SIZE} --fp8 --save-every=10000 --sample-every=100 ${WINDOW_PATTERN}
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=$DEPTH --target-param-data-ratio=$PARAM_DATA_RATIO --run=$WANDB_RUN --device-batch-size=${BATCH_SIZE} --fp8 --save-every=10000 --sample-every=100 ${WINDOW_PATTERN} ${CORPUS_ARGS}
 
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval -- --device-batch-size=${BATCH_SIZE}
@@ -117,8 +127,10 @@ torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval -- -
 # see dev/gen_synthetic_data.py for details on how this data was prepared and to get a sense of how you can easily tune it
 curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
+python -m scripts.generate_domain_qa --model-tag d${DEPTH}
+
 # run SFT and eval the model
-torchrun --standalone --nproc_per_node=NPROC_PER_NODE -m scripts.chat_sft -- --device-batch-size=${BATCH_SIZE} --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=NPROC_PER_NODE -m scripts.chat_sft -- --device-batch-size=${BATCH_SIZE} --run=$WANDB_RUN  --domain-qa-epochs=3
 torchrun --standalone --nproc_per_node=NPROC_PER_NODE -m scripts.chat_eval -- -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively

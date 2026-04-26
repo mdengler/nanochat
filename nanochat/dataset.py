@@ -25,6 +25,9 @@ MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
 index_to_filename = lambda index: f"shard_{index:05d}.parquet" # format of the filenames
 base_dir = get_base_dir()
 DATA_DIR = os.path.join(base_dir, "base_data_climbmix")
+# Stable home for user-provided domain corpora. Decoupled from DATA_DIR so it
+# survives upstream dataset switches (e.g. FineWeb-EDU -> ClimbMix).
+CORPORA_DIR = os.path.join(base_dir, "corpora")
 
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported
@@ -64,20 +67,57 @@ def list_parquet_files(data_dir=None, warn_on_legacy=False):
     parquet_paths = [os.path.join(data_dir, f) for f in parquet_files]
     return parquet_paths
 
-def get_corpuses(data_dir=None):
+def get_corpuses(data_dir=None, corpora_dir=None):
     """
     Returns dict mapping corpus_name -> sorted list of parquet file paths.
-    - Files named "shard_*.parquet" → corpus_name = "primary"
-    - Files named "foo_*.parquet"   → corpus_name = "foo"
-    The last file overall (alphabetically) is reserved for validation and excluded.
+
+    Sources scanned:
+    - DATA_DIR for "shard_*.parquet" files -> "primary" corpus.
+      The alphabetically last shard is reserved for validation and excluded.
+    - CORPORA_DIR/{name}/*.parquet -> corpus named "{name}".
+
+    Legacy (deprecated): non-"shard_*" parquet files in DATA_DIR are still
+    grouped by filename prefix, with a warning recommending a move to
+    corpora/{name}/ since DATA_DIR is upstream-dataset specific.
     """
+    data_dir = DATA_DIR if data_dir is None else data_dir
+    corpora_dir = CORPORA_DIR if corpora_dir is None else corpora_dir
+
     all_paths = list_parquet_files(data_dir)          # already sorted
-    train_paths = all_paths[:-1]                       # exclude last file (val shard)
     corpuses = {}
-    for path in train_paths:
-        prefix = os.path.basename(path).split('_')[0]
-        name = "primary" if prefix == "shard" else prefix
-        corpuses.setdefault(name, []).append(path)
+
+    # Primary shards. Look explicitly for "shard_*" so a stray non-shard file
+    # in DATA_DIR doesn't accidentally get treated as the val shard.
+    shard_paths = [p for p in all_paths if os.path.basename(p).startswith("shard_")]
+    if len(shard_paths) >= 2:
+        corpuses["primary"] = shard_paths[:-1]  # last shard is val
+
+    # Legacy: non-shard files in DATA_DIR (pre-v2 way of adding domain corpora)
+    legacy_paths = [p for p in all_paths if not os.path.basename(p).startswith("shard_")]
+    if legacy_paths:
+        print(
+            f"DEPRECATION: non-primary parquets found in DATA_DIR ({data_dir}). "
+            f"Move them to {corpora_dir}/<corpus_name>/ to make them stable across "
+            f"upstream dataset switches."
+        )
+        for path in legacy_paths:
+            prefix = os.path.basename(path).split('_')[0] or "legacy"
+            corpuses.setdefault(prefix, []).append(path)
+
+    # New layout: scan corpora/<name>/*.parquet
+    if os.path.isdir(corpora_dir):
+        for entry in sorted(os.listdir(corpora_dir)):
+            subdir = os.path.join(corpora_dir, entry)
+            if not os.path.isdir(subdir):
+                continue
+            parquet_files = sorted(
+                f for f in os.listdir(subdir)
+                if f.endswith('.parquet') and not f.endswith('.tmp')
+            )
+            paths = [os.path.join(subdir, f) for f in parquet_files]
+            if paths:
+                corpuses.setdefault(entry, []).extend(paths)
+
     return corpuses
 
 def estimate_corpus_tokens(file_paths, bytes_per_token=4):

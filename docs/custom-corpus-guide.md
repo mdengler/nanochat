@@ -1,48 +1,91 @@
 # How to Add Your Own Corpus to Nanochat
 
-## Step 1: Prepare Your Data as Parquet
+## Quick Start
 
-Nanochat's dataloader reads parquet files with a single `text` column. Each row is one document. The naming convention determines corpus membership:
-
-```python
-# In ~/out/nanochat/base_data_climbmix/:
-#   shard_00000.parquet  →  "primary" corpus (ClimbMix)
-#   shard_00001.parquet  →  "primary"
-#   legal_00.parquet     →  "legal" corpus (your domain)
-#   mydata_00.parquet    →  "mydata" corpus (your domain)
-```
-
-The prefix before the first `_` becomes the corpus name. `shard_*` is reserved for primary (ClimbMix).
-
-Here's a minimal script to convert your text data:
-
-```python
-import pyarrow as pa
-import pyarrow.parquet as pq
-
-# Your documents — each string is one "document"
-documents = [
-    "First document text here...",
-    "Second document text here...",
-    # ...
-]
-
-table = pa.table({"text": documents})
-pq.write_table(table, "~/out/nanochat/base_data_climbmix/mydata_00.parquet")
-```
-
-You don't need to tokenize anything — the dataloader handles tokenization on-the-fly using nanochat's 32K-vocab BPE tokenizer. Just provide raw text.
-
-## Step 2: Train with Blending
-
-Once your parquet is in `base_data_climbmix/`, blending is automatic:
+Point `--corpus` at any directory of text or parquet files and nanochat will
+auto-ingest, chunk, and blend it into pretraining:
 
 ```bash
 torchrun --nproc_per_node=8 -m scripts.base_train \
-  --depth=20 --blend-m=10
+  --depth=20 --blend-m=10 --corpus=/path/to/my/legal/docs
 ```
 
-`--blend-m=10` means your domain corpus will be oversampled so it gets ~10 effective epochs over the training run, while ClimbMix gets its Chinchilla-optimal single pass. The training horizon is automatically extended to accommodate the extra domain tokens.
+That's it. The corpus is named after the source directory (`legal_docs` here),
+written to `~/.cache/nanochat/corpora/legal_docs/*.parquet`, and oversampled to
+~10 effective epochs during training.
+
+You can pass `--corpus` multiple times for multiple domains, e.g.
+`--corpus=/data/legal --corpus=/data/medical`.
+
+In `runs/speedrun.sh`, set the `CORPUS` env var to a space-separated list:
+
+```bash
+CORPUS="/data/legal /data/medical" bash runs/speedrun.sh
+```
+
+## Step 1: Prepare a Corpus (manual, if you'd rather)
+
+The `--corpus` flag above calls `scripts/prepare_corpus.py` for you. You can
+also run it directly to inspect or pre-stage corpora:
+
+```bash
+python -m scripts.prepare_corpus /path/to/my/legal/docs
+python -m scripts.prepare_corpus /path/to/my/legal/docs --name legal-v2
+```
+
+It walks the source directory, reads any text-like files (`.txt`, `.md`,
+`.py`, `.json`, `.html`, ...) and any parquet files with a `text` column,
+**chunks long documents at paragraph boundaries** (~4000 chars / ~1000 tokens
+each), and writes shards of ~8000 documents to:
+
+```
+~/.cache/nanochat/corpora/{name}/{name}_00000.parquet
+~/.cache/nanochat/corpora/{name}/{name}_00001.parquet
+...
+```
+
+Re-running on the same source is a no-op unless you add new files (skip-if-fresh).
+Pass `--overwrite` to force regeneration.
+
+### Why chunking matters
+
+Nanochat's BOS-aligned bestfit dataloader discards document tails that don't
+fit in a row. A 10MB text file (~2.5M tokens) would lose ~99.9% of its content
+without chunking. Splitting at paragraph boundaries preserves semantic
+coherence and lets the packer fit 1-2 chunks per row with minimal waste.
+
+### Corpus directory layout
+
+```
+~/.cache/nanochat/
+├── base_data_climbmix/        # upstream ClimbMix shards (untouched)
+│   ├── shard_00000.parquet
+│   └── ...
+└── corpora/                   # your domain data — stable across upstream switches
+    ├── legal/
+    │   ├── legal_00000.parquet
+    │   └── legal_00001.parquet
+    └── medical/
+        └── medical_00000.parquet
+```
+
+Each subdirectory of `corpora/` is one corpus, named after the subdirectory.
+This is decoupled from `base_data_climbmix/` (which is upstream-specific and
+will change again as nanochat moves to newer datasets).
+
+## Step 2: Train with Blending
+
+Once corpora are in `corpora/{name}/` (whether via `--corpus` or manual prep),
+blending is automatic:
+
+```bash
+torchrun --nproc_per_node=8 -m scripts.base_train --depth=20 --blend-m=10
+```
+
+`--blend-m=10` means each domain corpus will be oversampled so it gets ~10
+effective epochs over the training run, while ClimbMix gets its
+Chinchilla-optimal single pass. The training horizon is automatically extended
+to accommodate the extra domain tokens.
 
 ## Step 3 (Optional): Domain Q&A for SFT
 

@@ -80,6 +80,9 @@ parser.add_argument("--model-tag", type=str, default=None, help="override model 
 # Corpus blend
 parser.add_argument("--blend-m", type=int, default=10,
     help="oversampling multiplier for non-primary corpora (0 = disable blending)")
+parser.add_argument("--corpus", type=str, action="append", default=[],
+    help="path to a directory of text/parquet files to ingest as a domain corpus "
+         "(repeatable; each is auto-prepared into corpora/<name>/ before training)")
 args = parser.parse_args()
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
@@ -327,6 +330,16 @@ if resuming:
 scaler = torch.amp.GradScaler() if COMPUTE_DTYPE == torch.float16 else None
 if scaler is not None:
     print0("GradScaler enabled for fp16 training")
+
+# Pre-process any --corpus directories before scanning corpora/.
+# Only rank 0 does file I/O; all ranks then sync via barrier so the scan sees them.
+if args.corpus:
+    if master_process:
+        from scripts.prepare_corpus import prepare_one_corpus
+        for source in args.corpus:
+            prepare_one_corpus(source)
+    if ddp:
+        dist.barrier()
 
 # Corpus blend: build scheduled file list (uses target_tokens computed above)
 if args.blend_m > 0:
