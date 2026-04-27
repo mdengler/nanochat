@@ -73,7 +73,8 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # Number of processes/GPUs to use
-NPROC_PER_NODE=$(python -c 'import torch ; print (0 if not torch.cuda.is_available() else torch.cuda.device_count())')
+NPROCS=$(python -c 'import torch ; print (0 if not torch.cuda.is_available() else torch.cuda.device_count())')
+NPROC_PER_NODE=gpu
 
 export MY_CUDA_VER=13
 export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvshmem/${MY_CUDA_VER}:${LD_LIBRARY_PATH}
@@ -88,7 +89,7 @@ DEPTH=24
 PARAM_DATA_RATIO=8
 
 WINDOW_PATTERN=
-if [ "${NPROC_PER_NODE}" == 1 ] ; then
+if [ "${NPROCS}" == 1 ] ; then
     DEPTH=4
     WINDOW_PATTERN="--window-pattern L"
 fi
