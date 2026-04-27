@@ -92,6 +92,7 @@ WINDOW_PATTERN=
 if [ "${NPROCS}" == 1 ] ; then
     DEPTH=4
     WINDOW_PATTERN="--window-pattern L"
+    BATCH_SIZE=16
 fi
 
 # for comparison / benchmarking, run this script within the NVIDIA docker container:
