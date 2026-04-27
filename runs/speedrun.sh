@@ -90,6 +90,7 @@ BATCH_SIZE=32
 # d24 model (slightly undertrained to beat GPT-2 => decrease data:params ratio from compute optimal 10.5 (default) to 8)
 DEPTH=24
 PARAM_DATA_RATIO=8
+SAVE_EVERY=${SAVE_EVERY:-250}
 
 WINDOW_PATTERN=
 if [ "${NPROCS}" == 1 ] ; then
@@ -120,7 +121,7 @@ if [ -n "$CORPUS" ]; then
     done
 fi
 
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=$DEPTH --target-param-data-ratio=$PARAM_DATA_RATIO --run=$WANDB_RUN --device-batch-size=${BATCH_SIZE} --fp8 --save-every=10000 --sample-every=100 ${WINDOW_PATTERN} ${CORPUS_ARGS}
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=$DEPTH --target-param-data-ratio=$PARAM_DATA_RATIO --run=$WANDB_RUN --device-batch-size=${BATCH_SIZE} --fp8 --save-every=${SAVE_EVERY} --sample-every=100 ${WINDOW_PATTERN} ${CORPUS_ARGS}
 
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval -- --device-batch-size=${BATCH_SIZE}
