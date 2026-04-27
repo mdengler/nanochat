@@ -15,6 +15,9 @@ set -x
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
+
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
@@ -79,12 +82,15 @@ wait $DATASET_DOWNLOAD_PID
 NPROCS=$(python -c 'import torch ; print (0 if not torch.cuda.is_available() else torch.cuda.device_count())')
 NPROC_PER_NODE=gpu
 
-export MY_CUDA_VER=13
-export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvshmem/${MY_CUDA_VER}:${LD_LIBRARY_PATH}
-export TRITON_PTXAS_PATH=/usr/local/cuda-${MY_CUDA_VER}/bin/ptxas
-export CUDA_HOME=/usr/local/cuda-${MY_CUDA_VER}
-export PATH=/usr/local/cuda-${MY_CUDA_VER}/bin:$PATH
-export LD_LIBRARY_PATH=/usr/local/cuda-${MY_CUDA_VER}/lib64:${LD_LIBRARY_PATH}
+if [ -e /usr/lib/aarch64-linux-gnu/nvshmem ] ; then
+    export MY_CUDA_VER=$(ls /usr/lib/aarch64-linux-gnu/nvshmem/ | sort -V| tail -1)
+    export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvshmem/${MY_CUDA_VER}:${LD_LIBRARY_PATH}
+fi
+export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
+export CUDA_HOME=/usr/local/cuda
+export PATH=/usr/local/cuda/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+
 
 BATCH_SIZE=32
 # d24 model (slightly undertrained to beat GPT-2 => decrease data:params ratio from compute optimal 10.5 (default) to 8)
