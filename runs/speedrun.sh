@@ -94,9 +94,15 @@ SAVE_EVERY=${SAVE_EVERY:-250}
 
 WINDOW_PATTERN=
 if [ "${NPROCS}" == 1 ] ; then
-    DEPTH=4
-    WINDOW_PATTERN="--window-pattern L"
     BATCH_SIZE=16
+    HAS_FA=$(python -c 'import flash_attn.flash_attn_interface as fa2 ; print("1" if hasattr(fa2, "flash_attn_func") and hasattr(fa2, "flash_attn_with_kvcache") else "")')
+    if [ "${HAS_FA}" == 1 ] ; then
+        DEPTH=24
+        WINDOW_PATTERN="--window-pattern SSSL"
+    else
+        DEPTH=4
+        WINDOW_PATTERN="--window-pattern L"
+    fi
 fi
 
 # for comparison / benchmarking, run this script within the NVIDIA docker container:
