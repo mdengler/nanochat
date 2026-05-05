@@ -634,7 +634,7 @@ while True:
         avg_time_per_step = total_training_time / steps_done
         remaining_steps = num_iterations - step
         eta_seconds = remaining_steps * avg_time_per_step
-        eta_str = f" | eta: {eta_seconds/60:.1f}m"
+        eta_str = f" | eta: {eta_seconds/60:.1f}m {eta_seconds/60/60:.1f}h"
     else:
         eta_str = ""
     epoch = f"{dataloader_state_dict['epoch']} pq: {dataloader_state_dict['pq_idx']} rg: {dataloader_state_dict['rg_idx']}"
