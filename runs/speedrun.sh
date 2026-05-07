@@ -122,6 +122,19 @@ fi
 ####  # install inside the container: pandas pyarrow wandb tokenizers tiktoken
 ####  # run inside the nanochat directory inside the container: python -m scripts.base_train --depth=2
 
+
+# Auto-resume logic
+RESUME=${RESUME:-yes}
+if [ "$RESUME" = "yes" ]; then
+    LATEST_CHECKPOINT=$(ls -tr /workspace/runs/base_checkpoints/*/model_*.pt | tail -1 | perl -npe 's/.*model_0+//; s/.pt$//')
+    if [ -n "${LATEST_CHECKPOINT}" ] ; then
+        RESUME_ARGS="--resume=${LATEST_CHECKPOINT}"
+    else
+        RESUME_ARGS=""
+    fi
+fi
+
+
 # Optional: domain corpus directories to blend into pretraining.
 # Space-separated paths in CORPUS env var; each becomes a --corpus=<path> arg
 # so base_train.py auto-prepares it via scripts.prepare_corpus before training.
@@ -133,7 +146,7 @@ if [ -n "$CORPUS" ]; then
     done
 fi
 
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=$DEPTH --target-param-data-ratio=$PARAM_DATA_RATIO --run=$WANDB_RUN --device-batch-size=${BATCH_SIZE} --fp8 --save-every=${SAVE_EVERY} --sample-every=100 ${WINDOW_PATTERN} ${CORPUS_ARGS}
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=$DEPTH --target-param-data-ratio=$PARAM_DATA_RATIO --run=$WANDB_RUN --device-batch-size=${BATCH_SIZE} --fp8 --save-every=${SAVE_EVERY} --sample-every=100 ${WINDOW_PATTERN} ${CORPUS_ARGS} ${RESUME_ARGS}
 
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval -- --device-batch-size=${BATCH_SIZE}
